@@ -12,10 +12,12 @@ from typing import ClassVar
 
 from lsprotocol.types import (
     INITIALIZE,
+    TEXT_DOCUMENT_DID_CLOSE,
     TEXT_DOCUMENT_DID_OPEN,
     TEXT_DOCUMENT_DID_SAVE,
     Diagnostic,
     DiagnosticSeverity,
+    DidCloseTextDocumentParams,
     DidOpenTextDocumentParams,
     DidSaveTextDocumentParams,
     InitializeParams,
@@ -28,13 +30,15 @@ from pygls import server, uris
 from pygls.workspace import Document
 
 from mypygls import __version__
+from mypygls.timer import timer
 
 logger = logging.getLogger("mypygls")
 
 
 class DMypyStatus(enum.Enum):
-    running = 0
-    fail = 2
+    ok = 0
+    warning = 1
+    error = 2
 
 
 class DMypyCmd(str, enum.Enum):
@@ -52,10 +56,6 @@ class DMypyCmd(str, enum.Enum):
     hang = "hang"        # Hang for 100 seconds
     daemon = "daemon"    # Run daemon in foreground
     # fmt: on
-
-    # The following command are unused as they do not accept
-    # additional mypy arguments like "--show-column-numbers":
-    #
 
 
 @dataclass
@@ -84,6 +84,7 @@ class State:
     settings: Settings
 
     registered_files: list[str] = field(default_factory=list)
+    daemon_started: bool = False
 
     @classmethod
     def from_init_params(cls, params: InitializeParams) -> State:
@@ -137,6 +138,11 @@ class State:
         self.registered_files = pyfiles
 
 
+class ProgressTokens(str, enum.Enum):
+    start_daemon = "start_daemon"
+    linting = "linting"
+
+
 STATE: State
 
 MAX_WORKERS = 5
@@ -153,7 +159,9 @@ TOOL_DISPLAY = "dmypy"
 ###
 
 # coming from pylsp-mypy (to be checked agasint null-ls list of regexes to catch all cases)
-LINE_PATTERN = re.compile(r"((?:^[a-z]:)?[^:]+):(?:(\d+):)?(?:(\d+):)? (\w+): (.*)")
+LINE_PATTERN = re.compile(
+    r"((?:^[a-z]:)?[^:]+):(?:(\d+):)?(?:(\d+):)? (?:note: )?(\w+): (.*)"
+)
 
 
 def format_dmypy_cmd(cmd: DMypyCmd, *, path: str | None = None) -> list[str]:
@@ -187,10 +195,10 @@ def format_dmypy_cmd(cmd: DMypyCmd, *, path: str | None = None) -> list[str]:
     return mypy_cmd
 
 
-def call_mypy(cmd: DMypyCmd, *, path: str | None = None) -> tuple[str, str, int]:
+def call_dmypy(cmd: DMypyCmd, *, path: str | None = None) -> tuple[str, str, int]:
     out, err, status = mypy_api.run_dmypy(format_dmypy_cmd(cmd=cmd, path=path))
 
-    if status == DMypyStatus.fail.value:
+    if status == DMypyStatus.error.value:
         logger.error(
             f"failed to run {cmd.value} for {STATE.settings.workspace_name}\n{err}"
         )
@@ -199,20 +207,25 @@ def call_mypy(cmd: DMypyCmd, *, path: str | None = None) -> tuple[str, str, int]
 
 
 def daemon_status() -> DMypyStatus:
-    _, _, status = call_mypy(DMypyCmd.status)
+    _, _, status = call_dmypy(DMypyCmd.status)
     return DMypyStatus(status)
 
 
 def start_daemon() -> None:
     # use the "run" command to ensure the daemon grab all pythons files
     # (which is not done via "start")
-    _, _, status = call_mypy(DMypyCmd.run, path=STATE.settings.workspaceFS)
+    with timer:
+        out, err, status = call_dmypy(DMypyCmd.run, path=STATE.settings.workspaceFS)
 
-    if status != DMypyStatus.running.value:
+    if status == DMypyStatus.error.value:
+        logger.error(f"Failed to run daemon:\n{status=}\n{err=}\n{out=}")
+        LSP_SERVER.show_message("failed to start.")
         return
 
     logger.info(f"started daemon for workspace '{STATE.settings.workspace_name}'")
     STATE.update_registered_files()
+    STATE.daemon_started = True
+    LSP_SERVER.show_message(f"daemon (re-)started ({timer}).")
 
 
 def _parse_raw_diagnostic_line(line: str, document: Document) -> Diagnostic | None:
@@ -220,7 +233,7 @@ def _parse_raw_diagnostic_line(line: str, document: Document) -> Diagnostic | No
     if not result:
         return None
 
-    filepath, raw_lineno, raw_offset, severity, msg = result.groups()
+    filepath, raw_lineno, raw_offset, raw_severity, msg = result.groups()
 
     if not document.path.endswith(filepath):
         return None
@@ -236,18 +249,29 @@ def _parse_raw_diagnostic_line(line: str, document: Document) -> Diagnostic | No
     else:
         end_pos = Position(line=lineno, character=offset + 1)
 
+    if raw_severity == "Hint":
+        severity = DiagnosticSeverity.Hint
+    elif raw_severity == "error":
+        severity = DiagnosticSeverity.Error
+    else:
+        severity = DiagnosticSeverity.Warning
+
     return Diagnostic(
         source=TOOL_DISPLAY,
         range=Range(start=start_pos, end=end_pos),
         message=msg,
-        severity=DiagnosticSeverity.Error
-        if severity == "error"
-        else DiagnosticSeverity.Warning,
+        severity=severity,
     )
 
 
-def run_lint(document: Document) -> list[Diagnostic]:
-    raw_diagnostics, messages, status = call_mypy(DMypyCmd.recheck)
+def run_lint(document: Document, daemon: bool) -> list[Diagnostic]:
+    if daemon:
+        raw_diagnostics, messages, status = call_dmypy(DMypyCmd.recheck)
+    else:
+        logger.debug(f"running fallback mypy on {document.path}")
+        raw_diagnostics, messages, status = mypy_api.run(
+            ["--show-column-numbers", document.path]
+        )
 
     diagnostics: list[Diagnostic] = []
     for line in raw_diagnostics.splitlines():
@@ -287,34 +311,53 @@ def did_open(params: DidOpenTextDocumentParams) -> None:
     """LSP handler for textDocument/didOpen request."""
     document = LSP_SERVER.workspace.get_document(params.text_document.uri)
 
-    if document.path not in STATE.registered_files:
-        logger.debug(f"New buffer {document.path}. Waiting for it to be saved.")
-        return
+    if not STATE.daemon_started:
+        diagnostics = run_lint(document, daemon=False)
+    else:
+        if document.path not in STATE.registered_files:
+            logger.debug(f"New buffer {document.path}. Waiting for it to be saved.")
+            return
 
-    diagnostics = run_lint(document)
+        diagnostics = run_lint(document, daemon=True)
 
     LSP_SERVER.publish_diagnostics(document.uri, diagnostics)
 
 
+@LSP_SERVER.thread()
 @LSP_SERVER.feature(TEXT_DOCUMENT_DID_SAVE)
-def did_save(params: DidSaveTextDocumentParams) -> None:
+def did_save_daemon(params: DidSaveTextDocumentParams) -> None:
     """LSP handler for textDocument/didSave request."""
+
     document = LSP_SERVER.workspace.get_document(params.text_document.uri)
 
-    if document.path not in STATE.registered_files:
-        logger.info(f"New file {document.path}. Restarting the daemon.")
-        mypy_api.run_dmypy(format_dmypy_cmd(DMypyCmd.stop))
-        start_daemon()
+    if not STATE.daemon_started:
+        diagnostics = run_lint(document, daemon=False)
+    else:
+        if document.path not in STATE.registered_files:
+            logger.info(f"New file {document.path}. Restarting the daemon.")
+            mypy_api.run_dmypy(format_dmypy_cmd(DMypyCmd.stop))
+            start_daemon()
+            return
 
-    diagnostics = run_lint(document)
+        diagnostics = run_lint(document, daemon=True)
+
     LSP_SERVER.publish_diagnostics(document.uri, diagnostics)
 
 
+@LSP_SERVER.feature(TEXT_DOCUMENT_DID_CLOSE)
+def did_close(params: DidCloseTextDocumentParams) -> None:
+    """LSP handler for textDocument/didClose request."""
+    document = LSP_SERVER.workspace.get_document(params.text_document.uri)
+    # Publishing empty diagnostics to clear the entries for this file.
+    LSP_SERVER.publish_diagnostics(document.uri, [])
+
+
 ###
-# Lifecycle.
+# Lifecycle
 ###
 
 
+@LSP_SERVER.thread()
 @LSP_SERVER.feature(INITIALIZE)
 def initialize(params: InitializeParams) -> None:
     """LSP handler for initialize request."""
@@ -346,10 +389,8 @@ def initialize(params: InitializeParams) -> None:
 
     logger.setLevel(STATE.settings.log_level.upper())
 
-    # LSP_SERVER.show_message_log(f"settings={STATE.settings}")
-
     logger.info(f"initialized mypygls '{__version__}' with mypy '{__mypy_version__}'")
     logger.debug(f"state folder at {STATE.state_folder}")
 
-    # Start the mypy daemon.
+    # Start the mypy daemon
     start_daemon()
