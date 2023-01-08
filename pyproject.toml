@@ -24,8 +24,11 @@ classifiers = [
 requires-python = ">=3.10"
 dynamic = ["version"]
 
+scripts = { mypygls = "mypygls.__main__:main" }
+
 dependencies = [
-  # "pandas==1.5.*",
+  "pygls>=1.0.0a3",
+  "mypy[dmypy]",
 ]
 
 [project.optional-dependencies]
@@ -46,8 +49,6 @@ dev = [
   "pre-commit==2.20.*",
   "black==22.10.*",
   "ruff",                  # replacement of flake8 & associated
-  #
-  "mypy==0.991",
 #
   # confort:
   "pdbpp",
@@ -151,10 +152,12 @@ implicit_reexport = true # no need to specify __all__ in modules
 # follow_imports = "silent"  # does not work when using dmypy https://github.com/python/mypy/issues/9475
 ignore_missing_imports = true # ignore missing stubs
 
+# ignore untyped calls (due to pygls)
+allow_untyped_calls = true
+
 [[tool.mypy.overrides]]
 module = ["tests.*", "docs.*"]
 disallow_untyped_defs = false
-disallow_untyped_calls = false
 disallow_incomplete_defs = false
 disallow_untyped_decorators = false
 
