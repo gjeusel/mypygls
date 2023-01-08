@@ -1,0 +1,18 @@
+fail_fast: false
+
+repos:
+  - repo: local
+    hooks:
+      - id: lint
+        name: Lint
+        entry: make lint
+        types: [python]
+        language: system
+        pass_filenames: false
+
+      - id: mypy
+        name: Mypy
+        entry: make mypy
+        types: [python]
+        language: system
+        pass_filenames: false

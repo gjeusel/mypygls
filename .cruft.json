@@ -1,0 +1,20 @@
+{
+  "template": "https://github.com/gjeusel/soft-cookiecutter",
+  "commit": "dc84404176550e01c9f25facaf01ee8e392f26f7",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "github_username": "gjeusel",
+      "project_name": "mypygls",
+      "project_slug": "mypygls",
+      "project_short_description": "Mypy turned into LSP.",
+      "dockerfile": "n",
+      "open_source_license": "MIT license",
+      "_copy_without_render": [
+        "{{cookiecutter.project_name}}/.github/workflows/ci.yml"
+      ],
+      "_template": "https://github.com/gjeusel/soft-cookiecutter"
+    }
+  },
+  "directory": null
+}
