@@ -34,11 +34,3 @@ jobs:
           SMOKESHOW_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SMOKESHOW_GITHUB_PR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           SMOKESHOW_AUTH_KEY: ${{ secrets.SMOKESHOW_AUTH_KEY }}
-
-      # - run: smokeshow upload docs
-      #   env:
-      #     SMOKESHOW_GITHUB_STATUS_DESCRIPTION: Docs Preview
-      #     SMOKESHOW_GITHUB_CONTEXT: docs
-      #     SMOKESHOW_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #     SMOKESHOW_GITHUB_PR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-      #     SMOKESHOW_AUTH_KEY: ${{ secrets.SMOKESHOW_AUTH_KEY }}
