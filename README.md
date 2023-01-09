@@ -10,9 +10,6 @@
   <a href="https://pypi.org/project/mypygls/">
       <img src="https://img.shields.io/pypi/v/mypygls" alt="Package version" onerror="this.style.display='none'">
   </a>
-  <a href="https://gjeusel.github.io/mypygls/">
-    <img src="https://img.shields.io/badge/mkdocs-pages-brightgreen" alt="MKDocs github page">
-  </a>
   <a href="https://github.com/pre-commit/pre-commit">
       <img src="https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white" alt="pre-commit">
   </a>
