@@ -325,7 +325,7 @@ def did_open(params: DidOpenTextDocumentParams) -> None:
 
 @LSP_SERVER.thread()
 @LSP_SERVER.feature(TEXT_DOCUMENT_DID_SAVE)
-def did_save_daemon(params: DidSaveTextDocumentParams) -> None:
+def did_save(params: DidSaveTextDocumentParams) -> None:
     """LSP handler for textDocument/didSave request."""
 
     document = LSP_SERVER.workspace.get_document(params.text_document.uri)
@@ -336,6 +336,7 @@ def did_save_daemon(params: DidSaveTextDocumentParams) -> None:
         if document.path not in STATE.registered_files:
             logger.info(f"New file {document.path}. Restarting the daemon.")
             mypy_api.run_dmypy(format_dmypy_cmd(DMypyCmd.stop))
+            STATE.daemon_started = False
             start_daemon()
             return
 
