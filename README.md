@@ -8,7 +8,7 @@
       <img src="https://coverage-badge.samuelcolvin.workers.dev/gjeusel/mypygls.svg" alt="Coverage">
   </a>
   <a href="https://pypi.org/project/mypygls/">
-      <img src="https://badge.fury.io/py/mypygls.svg" alt="Package version" onerror="this.style.display='none'">
+      <img src="https://img.shields.io/pypi/v/mypygls" alt="Package version" onerror="this.style.display='none'">
   </a>
   <a href="https://gjeusel.github.io/mypygls/">
     <img src="https://img.shields.io/badge/mkdocs-pages-brightgreen" alt="MKDocs github page">
